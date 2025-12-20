@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import csv  # for quoting
+import csv  
 import json
 import logging
 import os
@@ -485,7 +485,7 @@ ProviderFn = Callable[..., list[dict]]
 
 PROVIDERS: dict[str, ProviderFn] = {
     "crossref": fetch_crossref,
-    "elsevier_scopus": fetch_elsevier_scopus,  # requires api key
+    "elsevier_scopus": fetch_elsevier_scopus,  
     "pubmed": fetch_pubmed,
     "arxiv": fetch_arxiv,
     "openalex": fetch_openalex,
@@ -501,17 +501,14 @@ class HarvestConfig:
         default_factory=lambda: ["crossref", "openalex", "pubmed", "arxiv", "europe_pmc", "zenodo"]
     )
     api_keys: dict[str, str] = field(default_factory=dict)
-    ceilings: dict[str, int] = field(default_factory=dict)  # per-API ceiling
+    ceilings: dict[str, int] = field(default_factory=dict)  
     default_ceiling: int = 200
 
-    # orchestration
     max_workers: int = 6
     sleep_between_keywords_s: float = 0.0
 
-    # post-processing
     dedup_fuzzy_threshold: int = 95
 
-    # export
     output_dir: str | None = None
     export_prefix: str = "boltpy"
     write_full_csv: bool = True
@@ -542,9 +539,9 @@ def _call_provider(api: str, query: str, cfg: HarvestConfig) -> tuple[str, list[
         if not key:
             logger.info("Skipping elsevier_scopus: missing API key.")
             return api, []
-        return api, fn(query, key, ceiling)  # type: ignore[misc]
+        return api, fn(query, key, ceiling)  
 
-    return api, fn(query, ceiling)  # type: ignore[misc]
+    return api, fn(query, ceiling) 
 
 
 def harvest(cfg: HarvestConfig) -> HarvestResult:
