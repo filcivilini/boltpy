@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "boltpy"
-version = "0.1.3"
+version = "0.1.4"
 description = "BOLT: Bibliographic Orchestration for Literature Triage"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -68,6 +68,7 @@ python_version = "3.10"
 warn_unused_configs = true
 no_implicit_optional = true
 ignore_missing_imports = true
+
 
 
 
