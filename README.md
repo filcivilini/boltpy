@@ -18,7 +18,7 @@ It is designed for literature reviews where you want to:
 
 - Multi-source harvesting (select the APIs you want)
 - Per-source ceilings (`ceilings={"crossref": 150, "openalex": 200, ...}`)
-- Optional API key support (Elsevier Scopus)
+- Optional API key support # currently only Elsevier Scopus is supported
 - Deduplication:
   - DOI-based
   - exact normalized title
