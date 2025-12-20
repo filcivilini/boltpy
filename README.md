@@ -34,9 +34,6 @@ It is designed for literature reviews where you want to:
 
 pip install boltpy
 
-## From GitHub
-```bash
-pip install "git+https://github.com/<YOUR-USER>/<YOUR-REPO>.git"
 
 ## Example
 
