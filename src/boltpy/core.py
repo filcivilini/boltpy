@@ -1,6 +1,5 @@
 from __future__ import annotations
-
-import csv  
+import csv
 import json
 import logging
 import os
@@ -134,18 +133,57 @@ def http_get(url: str, **kwargs) -> requests.Response:
     raise RuntimeError("Unreachable")
 
 
-def fetch_crossref(query: str, max_results: int = 200) -> list[dict]:
+def _is_iso_date_yyyy_mm_dd(s: str) -> bool:
+    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", s))
+
+
+def _year_from_iso_date(s: str) -> int:
+    return int(s[:4])
+
+
+def _passes_year_range(year: Any, from_year: int | None, until_year: int | None) -> bool:
+    if year is None or (isinstance(year, float) and pd.isna(year)):
+        return True  
+    try:
+        y = int(year)
+    except Exception:
+        return True
+    if from_year is not None and y < from_year:
+        return False
+    if until_year is not None and y > until_year:
+        return False
+    return True
+
+
+def fetch_crossref(
+    query: str,
+    max_results: int = 200,
+    from_pub_date: str | None = None,
+    until_pub_date: str | None = None,
+) -> list[dict]:
     results: list[dict] = []
     logger.info("🔍 CrossRef: %s", query)
 
+    filter_parts: list[str] = []
+    if from_pub_date:
+        if not _is_iso_date_yyyy_mm_dd(from_pub_date):
+            raise ValueError(f"from_pub_date must be YYYY-MM-DD, got: {from_pub_date}")
+        filter_parts.append(f"from-pub-date:{from_pub_date}")
+    if until_pub_date:
+        if not _is_iso_date_yyyy_mm_dd(until_pub_date):
+            raise ValueError(f"until_pub_date must be YYYY-MM-DD, got: {until_pub_date}")
+        filter_parts.append(f"until-pub-date:{until_pub_date}")
+
     for offset in range(0, max_results, 100):
         url = "https://api.crossref.org/works"
-        params = {
+        params: dict[str, Any] = {
             "query.bibliographic": query,
-            "filter": "from-pub-date:2010-01-01,until-pub-date:2025-04-30,type:journal-article",
             "rows": min(100, max_results - offset),
             "offset": offset,
         }
+        if filter_parts:
+            params["filter"] = ",".join(filter_parts)
+
         try:
             response = http_get(url, params=params)
             items = response.json().get("message", {}).get("items", [])
@@ -189,7 +227,13 @@ def fetch_crossref(query: str, max_results: int = 200) -> list[dict]:
     return results
 
 
-def fetch_elsevier_scopus(query: str, api_key: str, max_results: int = 200) -> list[dict]:
+def fetch_elsevier_scopus(
+    query: str,
+    api_key: str,
+    max_results: int = 200,
+    from_year: int | None = None,
+    until_year: int | None = None,
+) -> list[dict]:
     results: list[dict] = []
     logger.info("🔍 Elsevier Scopus: %s", query)
 
@@ -210,6 +254,9 @@ def fetch_elsevier_scopus(query: str, api_key: str, max_results: int = 200) -> l
             year_str = (item.get("prism:coverDate", "") or "")[:4]
             year = int(year_str) if year_str.isdigit() else None
 
+            if not _passes_year_range(year, from_year, until_year):
+                continue
+
             results.append(
                 {
                     "source": "elsevier_scopus",
@@ -229,16 +276,31 @@ def fetch_elsevier_scopus(query: str, api_key: str, max_results: int = 200) -> l
     return results
 
 
-def fetch_pubmed(query: str, max_results: int = 200) -> list[dict]:
+def fetch_pubmed(
+    query: str,
+    max_results: int = 200,
+    from_pub_date: str | None = None,
+    until_pub_date: str | None = None,
+) -> list[dict]:
     results: list[dict] = []
     logger.info("🔍 PubMed: %s", query)
 
     base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
     try:
-        search_resp = http_get(
-            base + "esearch.fcgi",
-            params={"db": "pubmed", "term": query, "retmax": max_results, "retmode": "json"},
-        )
+        esearch_params: dict[str, Any] = {"db": "pubmed", "term": query, "retmax": max_results, "retmode": "json"}
+
+        if from_pub_date:
+            if not _is_iso_date_yyyy_mm_dd(from_pub_date):
+                raise ValueError(f"from_pub_date must be YYYY-MM-DD, got: {from_pub_date}")
+            esearch_params["mindate"] = from_pub_date
+            esearch_params["datetype"] = "pdat"
+        if until_pub_date:
+            if not _is_iso_date_yyyy_mm_dd(until_pub_date):
+                raise ValueError(f"until_pub_date must be YYYY-MM-DD, got: {until_pub_date}")
+            esearch_params["maxdate"] = until_pub_date
+            esearch_params["datetype"] = "pdat"
+
+        search_resp = http_get(base + "esearch.fcgi", params=esearch_params)
         ids = search_resp.json().get("esearchresult", {}).get("idlist", [])
         if not ids:
             return results
@@ -303,7 +365,12 @@ def fetch_pubmed(query: str, max_results: int = 200) -> list[dict]:
     return results
 
 
-def fetch_arxiv(query: str, max_results: int = 200) -> list[dict]:
+def fetch_arxiv(
+    query: str,
+    max_results: int = 200,
+    from_year: int | None = None,
+    until_year: int | None = None,
+) -> list[dict]:
     results: list[dict] = []
     logger.info("🔍 arXiv: %s", query)
 
@@ -316,11 +383,10 @@ def fetch_arxiv(query: str, max_results: int = 200) -> list[dict]:
             title = fix_encoding(entry.title)
             abstract = clean_abstract(entry.summary)
             authors = fix_encoding(", ".join(a.name for a in entry.authors))
-            year = (
-                int(entry.published[:4])
-                if entry.published and entry.published[:4].isdigit()
-                else None
-            )
+            year = int(entry.published[:4]) if entry.published and entry.published[:4].isdigit() else None
+
+            if not _passes_year_range(year, from_year, until_year):
+                continue
 
             results.append(
                 {
@@ -356,7 +422,12 @@ def _openalex_abstract(inv_idx: Any) -> str:
     return " ".join(words).strip()
 
 
-def fetch_openalex(query: str, max_results: int = 200) -> list[dict]:
+def fetch_openalex(
+    query: str,
+    max_results: int = 200,
+    from_year: int | None = None,
+    until_year: int | None = None,
+) -> list[dict]:
     results: list[dict] = []
     logger.info("🔍 OpenAlex: %s", query)
 
@@ -375,6 +446,9 @@ def fetch_openalex(query: str, max_results: int = 200) -> list[dict]:
                 )
             )
             year = item.get("publication_year", None)
+
+            if not _passes_year_range(year, from_year, until_year):
+                continue
 
             results.append(
                 {
@@ -395,7 +469,12 @@ def fetch_openalex(query: str, max_results: int = 200) -> list[dict]:
     return results
 
 
-def fetch_europe_pmc(query: str, max_results: int = 200) -> list[dict]:
+def fetch_europe_pmc(
+    query: str,
+    max_results: int = 200,
+    from_year: int | None = None,
+    until_year: int | None = None,
+) -> list[dict]:
     results: list[dict] = []
     logger.info("🔍 Europe PMC: %s", query)
 
@@ -411,6 +490,9 @@ def fetch_europe_pmc(query: str, max_results: int = 200) -> list[dict]:
             authors = fix_encoding(item.get("authorString", ""))
             year_str = str(item.get("pubYear", "") or "")
             year = int(year_str) if year_str.isdigit() else None
+
+            if not _passes_year_range(year, from_year, until_year):
+                continue
 
             url = ""
             ft = item.get("fullTextUrlList", {})
@@ -439,7 +521,12 @@ def fetch_europe_pmc(query: str, max_results: int = 200) -> list[dict]:
     return results
 
 
-def fetch_zenodo(query: str, max_results: int = 200) -> list[dict]:
+def fetch_zenodo(
+    query: str,
+    max_results: int = 200,
+    from_year: int | None = None,
+    until_year: int | None = None,
+) -> list[dict]:
     results: list[dict] = []
     logger.info("🔍 Zenodo: %s", query)
 
@@ -460,6 +547,9 @@ def fetch_zenodo(query: str, max_results: int = 200) -> list[dict]:
             year = None
             if isinstance(pub_date, str) and len(pub_date) >= 4 and pub_date[:4].isdigit():
                 year = int(pub_date[:4])
+
+            if not _passes_year_range(year, from_year, until_year):
+                continue
 
             results.append(
                 {
@@ -485,7 +575,7 @@ ProviderFn = Callable[..., list[dict]]
 
 PROVIDERS: dict[str, ProviderFn] = {
     "crossref": fetch_crossref,
-    "elsevier_scopus": fetch_elsevier_scopus,  
+    "elsevier_scopus": fetch_elsevier_scopus,
     "pubmed": fetch_pubmed,
     "arxiv": fetch_arxiv,
     "openalex": fetch_openalex,
@@ -501,7 +591,7 @@ class HarvestConfig:
         default_factory=lambda: ["crossref", "openalex", "pubmed", "arxiv", "europe_pmc", "zenodo"]
     )
     api_keys: dict[str, str] = field(default_factory=dict)
-    ceilings: dict[str, int] = field(default_factory=dict)  
+    ceilings: dict[str, int] = field(default_factory=dict)
     default_ceiling: int = 200
 
     max_workers: int = 6
@@ -513,6 +603,9 @@ class HarvestConfig:
     export_prefix: str = "boltpy"
     write_full_csv: bool = True
     write_asreview_csv: bool = True
+    
+    from_pub_date: str | None = None
+    until_pub_date: str | None = None
 
 
 @dataclass(slots=True)
@@ -534,14 +627,34 @@ def _call_provider(api: str, query: str, cfg: HarvestConfig) -> tuple[str, list[
     fn = PROVIDERS[api]
     ceiling = _resolve_ceiling(cfg, api)
 
+    from_year: int | None = None
+    until_year: int | None = None
+    if cfg.from_pub_date:
+        if not _is_iso_date_yyyy_mm_dd(cfg.from_pub_date):
+            raise ValueError(f"from_pub_date must be YYYY-MM-DD, got: {cfg.from_pub_date}")
+        from_year = _year_from_iso_date(cfg.from_pub_date)
+    if cfg.until_pub_date:
+        if not _is_iso_date_yyyy_mm_dd(cfg.until_pub_date):
+            raise ValueError(f"until_pub_date must be YYYY-MM-DD, got: {cfg.until_pub_date}")
+        until_year = _year_from_iso_date(cfg.until_pub_date)
+
     if api == "elsevier_scopus":
         key = cfg.api_keys.get("elsevier_scopus") or os.getenv("ELSEVIER_API_KEY", "")
         if not key:
             logger.info("Skipping elsevier_scopus: missing API key.")
             return api, []
-        return api, fn(query, key, ceiling)  
+        return api, fn(query, key, ceiling, from_year, until_year)
 
-    return api, fn(query, ceiling) 
+    if api == "crossref":
+        return api, fn(query, ceiling, cfg.from_pub_date, cfg.until_pub_date)
+
+    if api == "pubmed":
+        return api, fn(query, ceiling, cfg.from_pub_date, cfg.until_pub_date)
+
+    if api in ("openalex", "arxiv", "europe_pmc", "zenodo"):
+        return api, fn(query, ceiling, from_year, until_year)
+
+    return api, fn(query, ceiling)
 
 
 def harvest(cfg: HarvestConfig) -> HarvestResult:
@@ -625,7 +738,10 @@ def harvest(cfg: HarvestConfig) -> HarvestResult:
     has_doi = df["doi"].str.startswith("10.")
     has_url = df["url"].str.startswith(("http://", "https://"))
     df = df[
-        has_doi.fillna(False) | has_url.fillna(False) | (df["title"] != "") | (df["abstract"] != "")
+        has_doi.fillna(False)
+        | has_url.fillna(False)
+        | (df["title"] != "")
+        | (df["abstract"] != "")
     ].copy()
     prisma["n_final"] = int(len(df))
 
@@ -644,9 +760,7 @@ def harvest(cfg: HarvestConfig) -> HarvestResult:
 
         if cfg.write_asreview_csv:
             asr_path = base + "_asreview.csv"
-            asreview_df.to_csv(
-                asr_path, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL
-            )
+            asreview_df.to_csv(asr_path, index=False, encoding="utf-8-sig", quoting=csv.QUOTE_MINIMAL)
             out_paths["asreview_csv"] = asr_path
 
         prisma_path = base + "_prisma.json"
