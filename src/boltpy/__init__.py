@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 from .core import HarvestConfig, HarvestResult, harvest
 
 __all__ = ["__version__", "HarvestConfig", "HarvestResult", "harvest"]
+
 
 
 
