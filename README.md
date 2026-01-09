@@ -40,20 +40,20 @@ pip install boltpy
 from boltpy.core import HarvestConfig, harvest
 
 cfg = HarvestConfig(
-    keywords=["your keyword 1", "your keyword 2"],
+    keywords=["education", "TVET"],
     apis=["crossref", "openalex", "pubmed", "arxiv", "europe_pmc", "zenodo"],
     default_ceiling=100,
-    output_dir="outputs",          # optional: exports CSV + JSON
+    output_dir="outputs",      
     export_prefix="boltpy_demo",
+
+    from_pub_date="1997-01-01",
+    until_pub_date="2026-12-31",
 )
 
 res = harvest(cfg)
 
-# Full dataset (all fields)
 print(res.full.head())
-
-# PRISMA-like counters
+print(res.asreview.head())
 print(res.prisma)
-
-# Written files (if output_dir is set)
 print(res.output_paths)
+
