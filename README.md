@@ -40,7 +40,7 @@ pip install boltpy
 from boltpy.core import HarvestConfig, harvest
 
 cfg = HarvestConfig(
-    keywords=["education", "TVET"],
+    keywords=["Key word 1", "Key word 2", "Key word X"],  #as many keywords as you like
     apis=["crossref", "openalex", "pubmed", "arxiv", "europe_pmc", "zenodo"],
     default_ceiling=100,
     output_dir="outputs",      
