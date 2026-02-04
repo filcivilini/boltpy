@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "boltpy (BOLT): Bibliographic Orchestration for Literature Triage"
+type: software
+license: MIT
+repository-code: "https://github.com/filcivilini/boltpy"
+url: "https://github.com/filcivilini/boltpy"
+
+author:
+  - family-names: "Civilini"
+    given-names: "Filippo"
+
+
+version: "0.1.7"
+date-released: "2026-01-09"
