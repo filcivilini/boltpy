@@ -57,3 +57,10 @@ print(res.asreview.head())
 print(res.prisma)
 print(res.output_paths)
 
+## Community guidelines
+
+- **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Bug reports & feature requests:** please open a GitHub Issue (include steps to reproduce, expected vs actual behavior, and your environment).
+- **Support / questions:** open a GitHub Issue and label it as a question.
+
+
