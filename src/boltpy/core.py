@@ -58,6 +58,111 @@ def normalize_doi(s: Any) -> str:
     return s.lower()
 
 
+# ============================================================
+# DOI-safe deduplication helpers
+# ============================================================
+
+def _valid_doi(value: Any) -> str:
+    """
+    Return a canonical DOI comparison key.
+
+    Missing, malformed or non-string DOI values return "".
+    Invalid DOI values must never be used for deduplication.
+    """
+    doi = normalize_doi(value)
+
+    # Handle identifiers such as "doi:10.1234/example".
+    doi = re.sub(
+        r"^doi\s*:\s*",
+        "",
+        doi,
+        flags=re.I,
+    ).strip()
+
+    # DOI syntax: 10.<registrant>/<suffix>
+    if re.fullmatch(r"10\.\d{4,9}/\S+", doi):
+        return doi
+
+    return ""
+
+
+def deduplicate_doi(
+    df: pd.DataFrame,
+    doi_column: str = "doi",
+) -> pd.DataFrame:
+    """
+    Remove records sharing the same valid DOI.
+
+    Records with missing or invalid DOIs are always retained.
+    Original record order is preserved.
+    """
+    result = df.copy().reset_index(drop=True)
+
+    if doi_column not in result.columns:
+        return result
+
+    doi_keys = result[doi_column].map(_valid_doi)
+
+    duplicates = (
+        doi_keys.ne("")
+        & doi_keys.duplicated(keep="first")
+    )
+
+    return result.loc[
+        ~duplicates
+    ].reset_index(drop=True)
+
+
+def deduplicate_exact_title(
+    df: pd.DataFrame,
+    title_column: str = "title",
+    doi_column: str = "doi",
+    allow_missing_doi: bool = False,
+) -> pd.DataFrame:
+
+    result = df.copy().reset_index(drop=True)
+
+    if not allow_missing_doi:
+        return result
+
+    if title_column not in result.columns:
+        raise KeyError(title_column)
+
+    if doi_column in result.columns:
+        doi_values = result[
+            doi_column
+        ].map(_valid_doi)
+    else:
+        doi_values = pd.Series(
+            "",
+            index=result.index,
+        )
+
+    normalised_titles = result[
+        title_column
+    ].map(normalize_title_for_exact)
+
+    eligible = (
+        doi_values.eq("")
+        & normalised_titles.ne("")
+    )
+
+    duplicates = pd.Series(
+        False,
+        index=result.index,
+    )
+
+    duplicates.loc[eligible] = (
+        normalised_titles.loc[eligible]
+        .duplicated(keep="first")
+    )
+
+    return result.loc[
+        ~duplicates
+    ].reset_index(drop=True)
+
+
+
 def _norm_simple(s: str) -> str:
     s = (s or "").lower()
     s = re.sub(r"[^\w\s]", "", s)
@@ -70,18 +175,120 @@ def _block_key(s: str, block_chars: int = 32) -> str:
     return s[:block_chars]
 
 
+
 def deduplicate_fuzzy(
     df: pd.DataFrame,
     title_column: str = "title",
     threshold: int = 95,
     block_chars: int = 32,
     max_block: int = 200,
+    *,
+    doi_column: str = "doi",
+    allow_missing_doi: bool = False,
 ) -> pd.DataFrame:
     """
-    Blocked fuzzy dedup by title:
-    - blocks by normalized prefix
-    - fuzzy compare only inside each block
+    Conservative, DOI-aware fuzzy title deduplication.
+
+    Default:
+        No title-based removals.
+
+    Optional mode (allow_missing_doi=True):
+        Only records without valid DOIs are eligible
+        for fuzzy title matching.
+
+    Records with valid DOIs are always preserved
+    by this function.
+
+    The researcher controls the title similarity threshold.
     """
+
+    if not 0 <= threshold <= 100:
+        raise ValueError(
+            "threshold must be between 0 and 100"
+        )
+
+    result = df.copy().reset_index(drop=True)
+
+    # Conservative default: no title-based merging.
+    if not allow_missing_doi or len(result) < 2:
+        return result
+
+    if title_column not in result.columns:
+        raise KeyError(title_column)
+
+    # Identify records without valid DOIs.
+    if doi_column in result.columns:
+        doi_values = result[
+            doi_column
+        ].map(_valid_doi)
+    else:
+        doi_values = pd.Series(
+            "",
+            index=result.index,
+        )
+
+
+    titles = result[
+        title_column
+    ].map(fix_encoding)
+
+    normalised_titles = titles.map(
+        normalize_title_for_exact
+    )
+
+    eligible = (
+        doi_values.eq("")
+        & normalised_titles.ne("")
+    )
+
+    blocks = titles.loc[eligible].map(
+        lambda title: _block_key(
+            title,
+            block_chars,
+        )
+    )
+
+    to_drop = set()
+
+    for _, idx_arr in blocks.groupby(blocks).groups.items():
+
+        idx = list(idx_arr)
+
+        if len(idx) <= 1:
+            continue
+
+        if len(idx) > max_block:
+            continue
+
+        block_titles = [
+            titles.at[i].lower()
+            for i in idx
+        ]
+
+        scores = process.cdist(
+            block_titles,
+            block_titles,
+            scorer=fuzz.ratio,
+            workers=0,
+        )
+
+        for i in range(len(idx)):
+
+            if idx[i] in to_drop:
+                continue
+
+            for j in range(i + 1, len(idx)):
+
+                if idx[j] in to_drop:
+                    continue
+
+                if scores[i][j] >= threshold:
+                    to_drop.add(idx[j])
+
+    return result.drop(
+        index=list(to_drop)
+    ).reset_index(drop=True)
+
     df = df.copy().reset_index(drop=True)
     to_drop = set()
 
