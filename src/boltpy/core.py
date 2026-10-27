@@ -805,7 +805,7 @@ class HarvestConfig:
     sleep_between_keywords_s: float = 0.0
 
     dedup_fuzzy_threshold: int = 95
-
+    dedup_missing_doi_by_title: bool = False
     output_dir: str | None = None
     export_prefix: str = "boltpy"
     write_full_csv: bool = True
@@ -930,17 +930,35 @@ def harvest(cfg: HarvestConfig) -> HarvestResult:
 
     prisma["by_source"] = df["source"].value_counts(dropna=False).to_dict()
 
-    mask_doi = df["doi"] != ""
-    df = pd.concat([df[mask_doi].drop_duplicates(subset=["doi"]), df[~mask_doi]], ignore_index=True)
+   
+    df = deduplicate_doi(
+        df,
+        doi_column="doi",
+    )
+    
     prisma["n_after_doi"] = int(len(df))
-
-    df["_norm_title"] = df["title"].apply(normalize_title_for_exact)
-    df = df.drop_duplicates(subset=["_norm_title"]).reset_index(drop=True)
+    
+    
+    df = deduplicate_exact_title(
+        df,
+        title_column="title",
+        doi_column="doi",
+        allow_missing_doi=cfg.dedup_missing_doi_by_title,
+    )
+    
     prisma["n_after_title_norm"] = int(len(df))
-
-    df = df.drop(columns=["_norm_title"])
-    df = deduplicate_fuzzy(df, title_column="title", threshold=cfg.dedup_fuzzy_threshold)
+    
+    
+    df = deduplicate_fuzzy(
+        df,
+        title_column="title",
+        doi_column="doi",
+        threshold=cfg.dedup_fuzzy_threshold,
+        allow_missing_doi=cfg.dedup_missing_doi_by_title,
+    )
+    
     prisma["n_after_fuzzy"] = int(len(df))
+
 
     has_doi = df["doi"].str.startswith("10.")
     has_url = df["url"].str.startswith(("http://", "https://"))
